@@ -4,6 +4,8 @@ from sqlalchemy import select, or_
 from database import get_db
 from models import Log, LogCreate, Base
 from database import engine
+import ipaddress
+from datetime import datetime, timezone
 
 Base.metadata.create_all(bind=engine)
 
@@ -30,11 +32,21 @@ def parse_log_line(line: str):
     parts = line.split()
     if len(parts) != 5:
         return None
-    return {
-        "ip":parts[2],
-        "username":parts[3],
-        "action":parts[4]
-    }
+    try:
+        ipaddress.ip_address(parts[2])
+        timestamp = parts[0] + " " + parts[1]
+        parsed_timestamp = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+        
+        return {
+                "timestamp": parsed_timestamp,
+                "ip":parts[2],
+                "username":parts[3],
+                "action":parts[4]
+            }
+    except ValueError:
+        return None
+
+    
 
 @app.get("/")
 def root():
@@ -46,7 +58,10 @@ def get_logs(db: Session = Depends(get_db), action: str | None = None,
                 username : str | None = None,
                 ip: str | None = None,
                 search: str | None = None,
-                limit: int = Query(default=100, ge=1, le=1000)):
+                start_time: datetime | None = None,
+                end_time: datetime | None = None,
+                limit: int = Query(default=100, ge=1, le=1000),
+                offset: int = Query(defualt=0, ge=0)):
         stmt = select(Log)
         if action is not None: 
             stmt = stmt.where(Log.action==action)
@@ -54,6 +69,12 @@ def get_logs(db: Session = Depends(get_db), action: str | None = None,
             stmt = stmt.where(Log.username==username)
         if ip is not None: 
             stmt = stmt.where(Log.ip==ip)
+        if start_time is not None:
+            stmt = stmt.where(Log.timestamp >= start_time)
+        if end_time is not None:
+            stmt = stmt.where(Log.timestamp <= end_time)
+        if offset is not None:
+            stmt = stmt.offset(offset)
         if search is not None:
             pattern = f"%{search}%"
             condition = or_(
@@ -63,7 +84,9 @@ def get_logs(db: Session = Depends(get_db), action: str | None = None,
             )
             stmt = stmt.where(condition)
         stmt = stmt.limit(limit)
+        stmt = stmt.order_by(Log.timestamp.desc())
         results = db.scalars(stmt).all()
+
         return results
 
 @app.get("/logs/{log_id}")
@@ -81,6 +104,7 @@ def get_log(log_id:int, db: Session = Depends(get_db)):
 def create_log(log: LogCreate , db: Session = Depends(get_db)): #LogCreate class makes the incoming json body accessible
     new_log = Log(
         username=log.username,
+        timestamp=datetime.now(timezone.utc),
         action=log.action,
         ip=log.ip,
     )
@@ -117,20 +141,39 @@ def delete_log(log_id: int, db: Session = Depends(get_db)):
     )
 
 @app.post("/logs/upload")
-async def upload_file(file: UploadFile, db:Session = Depends(get_db)):
+async def upload_file(file: UploadFile, db: Session = Depends(get_db)):
     content = await file.read()
     decoded = content.decode("utf-8")
     lines = decoded.splitlines()
     amount = 0
-    for line in lines:
-        parsed_log = parse_log_line(line)
-        if parsed_log is not None:
+    invalid_logs = []
+    try:
+        for line_number, line in enumerate(lines, start=1):
+            parsed_log = parse_log_line(line)
+            if parsed_log is None:
+                invalid_logs.append({"line_number": line_number, "line": line})
+                continue
+
             log = Log(
+                timestamp=parsed_log["timestamp"],
                 username=parsed_log["username"],
                 action=parsed_log["action"],
                 ip=parsed_log["ip"]
-            )            
-            db.add(log)
+            )
             amount += 1
-    db.commit()
-    return {"filename": file.filename, "total_lines": len(lines), "valid_logs": amount}
+            db.add(log)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to upload logs"
+        )
+
+    return {
+        "filename": file.filename,
+        "total_lines": len(lines),
+        "valid_logs": amount,
+        "invalid_logs": len(invalid_logs),
+        "invalid_lines": invalid_logs,
+    }
