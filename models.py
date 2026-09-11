@@ -1,7 +1,7 @@
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import String
+from sqlalchemy import String, DateTime
 from pydantic import BaseModel
-
+from datetime import datetime
 class Base(DeclarativeBase):
     pass
 
@@ -9,6 +9,7 @@ class Log(Base):
     __tablename__ = "logs"
     
     id : Mapped[int] = mapped_column(primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     username: Mapped[str] = mapped_column(String(100))
     action: Mapped[str] = mapped_column(String(100))
     ip: Mapped[str] = mapped_column(String(45))
