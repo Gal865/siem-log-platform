@@ -35,7 +35,6 @@ dist/
 pip-wheel-metadata/
 
 # Local databases and runtime files
-database.py
 *.db
 *.sqlite
 *.sqlite3
