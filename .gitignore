@@ -35,6 +35,7 @@ dist/
 pip-wheel-metadata/
 
 # Local databases and runtime files
+database.py
 *.db
 *.sqlite
 *.sqlite3
@@ -52,4 +53,3 @@ pip-wheel-metadata/
 .DS_Store
 Thumbs.db
 Desktop.ini
-
