@@ -6,11 +6,7 @@ from models import Log, LogCreate, Base
 from database import engine
 import ipaddress
 from datetime import datetime, timezone
-
-Base.metadata.create_all(bind=engine)
-
-
-
+import traceback 
 app = FastAPI()
 
 logs = [
@@ -28,25 +24,30 @@ logs = [
     },
 ]
 
+valid_severity = ["WARNING","INFO","ERROR","CRITICAL"]
+
 def parse_log_line(line: str):
     parts = line.split()
-    if len(parts) != 5:
+    if len(parts) != 6:
         return None
     try:
         ipaddress.ip_address(parts[2])
         timestamp = parts[0] + " " + parts[1]
         parsed_timestamp = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
-        
+        parts[5] = parts[5].upper()
+        if parts[5] in valid_severity:
+            pass
+        else:
+            return None
         return {
                 "timestamp": parsed_timestamp,
                 "ip":parts[2],
                 "username":parts[3],
-                "action":parts[4]
+                "action":parts[4],
+                "severity":parts[5]
             }
     except ValueError:
         return None
-
-    
 
 @app.get("/")
 def root():
@@ -58,10 +59,11 @@ def get_logs(db: Session = Depends(get_db), action: str | None = None,
                 username : str | None = None,
                 ip: str | None = None,
                 search: str | None = None,
+                severity: str | None = None,
                 start_time: datetime | None = None,
                 end_time: datetime | None = None,
                 limit: int = Query(default=100, ge=1, le=1000),
-                offset: int = Query(defualt=0, ge=0)):
+                offset: int = Query(default=0, ge=0)):
         stmt = select(Log)
         if action is not None: 
             stmt = stmt.where(Log.action==action)
@@ -75,6 +77,8 @@ def get_logs(db: Session = Depends(get_db), action: str | None = None,
             stmt = stmt.where(Log.timestamp <= end_time)
         if offset is not None:
             stmt = stmt.offset(offset)
+        if severity is not None:
+            stmt = stmt.where(Log.severity==severity)
         if search is not None:
             pattern = f"%{search}%"
             condition = or_(
@@ -107,7 +111,14 @@ def create_log(log: LogCreate , db: Session = Depends(get_db)): #LogCreate class
         timestamp=datetime.now(timezone.utc),
         action=log.action,
         ip=log.ip,
+        severity=log.severity
     )
+    new_log.severity = new_log.severity.upper()
+    if new_log.severity not in valid_severity:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid Severity"
+        )
     db.add(new_log)
     db.commit()
     db.refresh(new_log)
@@ -120,6 +131,7 @@ def update_log(log_id: int, updated_log:LogCreate, db: Session = Depends(get_db)
         log.username = updated_log.username
         log.ip = updated_log.ip
         log.action = updated_log.action
+        log.severity = updated_log.severity
         db.commit()
         db.refresh(log)
         return {{"message": "Log updated"}}
@@ -158,13 +170,15 @@ async def upload_file(file: UploadFile, db: Session = Depends(get_db)):
                 timestamp=parsed_log["timestamp"],
                 username=parsed_log["username"],
                 action=parsed_log["action"],
-                ip=parsed_log["ip"]
+                ip=parsed_log["ip"],
+                severity=parsed_log["severity"]
             )
             amount += 1
             db.add(log)
         db.commit()
-    except Exception:
+    except Exception as e:
         db.rollback()
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
             detail="Failed to upload logs"
