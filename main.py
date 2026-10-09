@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Query, Depends, UploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_
 from database import get_db
-from models import Log, LogCreate, Base
+from models import Log, LogCreate, Base, RuleCreate, Rule
 from database import engine
 import ipaddress
 from datetime import datetime, timezone
@@ -123,6 +123,26 @@ def create_log(log: LogCreate , db: Session = Depends(get_db)): #LogCreate class
     db.commit()
     db.refresh(new_log)
     return new_log
+
+@app.post("/rules")
+def create_rule(rule: RuleCreate, db: Session = Depends(get_db)):
+    new_rule = Rule(
+        name=rule.name,
+        description=rule.description,
+        severity=rule.severity,
+        action=rule.action,
+        threshold=rule.threshold,
+        window=rule.window
+    )
+    if new_rule.severity not in valid_severity:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid Severity"
+        )
+    db.add(new_rule)
+    db.commit()
+    db.refresh(new_rule)
+    return new_rule
 
 @app.put("/logs/{log_id}")
 def update_log(log_id: int, updated_log:LogCreate, db: Session = Depends(get_db)):

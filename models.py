@@ -24,7 +24,10 @@ class Rule(Base):
     description: Mapped[str] = mapped_column()
     severity: Mapped[str] = mapped_column()
     alerts: Mapped[list["Alert"]] = relationship(back_populates="rule")
-
+    action: Mapped[str] = mapped_column()
+    threshold: Mapped[int] = mapped_column()
+    window: Mapped[int] = mapped_column()
+    
 class Alert(Base):
     __tablename__ = "alerts"
 
@@ -45,3 +48,11 @@ class LogCreate(BaseModel):
     action: str
     ip: str
     severity: str
+
+class RuleCreate(BaseModel):
+    name: str
+    description: str
+    severity: str
+    action: str
+    threshold: int
+    window: int
