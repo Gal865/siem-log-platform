@@ -2,11 +2,14 @@ from fastapi import FastAPI, HTTPException, Query, Depends, UploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_
 from database import get_db
-from models import Log, LogCreate, Base, RuleCreate, Rule
+from models import Log, LogCreate, Base, RuleCreate, Rule, Alert, AlertLog
 from database import engine
 import ipaddress
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import traceback 
+import time
+from database import SessionLocal
+
 app = FastAPI()
 
 logs = [
@@ -25,6 +28,51 @@ logs = [
 ]
 
 valid_severity = ["WARNING","INFO","ERROR","CRITICAL"]
+
+
+
+def run_detection_engine(db:Session):
+    stmt = select(Rule)
+    rules = db.scalars(stmt).all()
+    for rule in rules:
+        run_rule(rule, db)
+
+
+
+def run_rule(rule:Rule, db:Session):
+    window_end = datetime.now(timezone.utc)
+    window_start = window_end - timedelta(minutes=rule.window)
+    stmt = (
+        select(Log)
+        .where(Log.action == rule.action)
+        .where(Log.timestamp >= window_start)
+        .where(Log.timestamp <= window_end)
+    )
+    candidate_logs = db.scalars(stmt).all()
+    logs_by_user = {}
+    for log in candidate_logs:
+        if log.username not in logs_by_user:
+            logs_by_user[log.username] = []
+        logs_by_user[log.username].append(log)
+
+    for username,logs in logs_by_user.items():
+        if len(logs) >= rule.threshold:
+            alert = Alert(
+                username = username,
+                time=window_end,
+                event_count=len(logs),
+                rule_id = rule.id
+            )
+            db.add(alert)
+            db.flush()
+            for log in logs:
+                alertlog = AlertLog(
+                    alert_id = alert.id,
+                    log_id = log.id
+                )
+                db.add(alertlog)
+    db.commit()
+
 
 def parse_log_line(line: str):
     parts = line.split()
@@ -154,7 +202,7 @@ def update_log(log_id: int, updated_log:LogCreate, db: Session = Depends(get_db)
         log.severity = updated_log.severity
         db.commit()
         db.refresh(log)
-        return {{"message": "Log updated"}}
+        return {"message": "Log updated"}
     raise HTTPException(
         status_code=404,
         detail="Log not found"
@@ -166,7 +214,7 @@ def delete_log(log_id: int, db: Session = Depends(get_db)):
     if log is not None:
         db.delete(log)
         db.commit()
-        return {{"message": "Log deleted"}}
+        return {"message": "Log deleted"}
     raise HTTPException(
         status_code=404,
         detail="Log not found"
@@ -211,3 +259,5 @@ async def upload_file(file: UploadFile, db: Session = Depends(get_db)):
         "invalid_logs": len(invalid_logs),
         "invalid_lines": invalid_logs,
     }
+
+
