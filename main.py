@@ -4,6 +4,7 @@ from sqlalchemy import select, or_
 from database import get_db
 from models import Log, LogCreate, Base, RuleCreate, Rule, Alert, AlertLog
 from database import engine
+from zoneinfo import ZoneInfo
 import ipaddress
 from datetime import datetime, timezone, timedelta
 import traceback 
@@ -29,16 +30,6 @@ logs = [
 
 valid_severity = ["WARNING","INFO","ERROR","CRITICAL"]
 
-
-
-def run_detection_engine(db:Session):
-    stmt = select(Rule)
-    rules = db.scalars(stmt).all()
-    for rule in rules:
-        run_rule(rule, db)
-
-
-
 def run_rule(rule:Rule, db:Session):
     window_end = datetime.now(timezone.utc)
     window_start = window_end - timedelta(minutes=rule.window)
@@ -50,27 +41,48 @@ def run_rule(rule:Rule, db:Session):
     )
     candidate_logs = db.scalars(stmt).all()
     logs_by_user = {}
-    for log in candidate_logs:
+
+    #grouping logs by user
+    for log in candidate_logs: 
         if log.username not in logs_by_user:
             logs_by_user[log.username] = []
         logs_by_user[log.username].append(log)
 
     for username,logs in logs_by_user.items():
         if len(logs) >= rule.threshold:
-            alert = Alert(
-                username = username,
-                time=window_end,
-                event_count=len(logs),
-                rule_id = rule.id
-            )
-            db.add(alert)
-            db.flush()
-            for log in logs:
-                alertlog = AlertLog(
-                    alert_id = alert.id,
-                    log_id = log.id
+            stmt = (select(Alert)
+                    .where(Alert.username == username)
+                    .where(Alert.rule_id == rule.id)
+                    .where(Alert.time >= window_start)
+                    )
+            existing_alert = db.scalars(stmt).first()
+            if existing_alert: #If a log will trigger an alert, but it within the window of the previously written alert, add it to the same alert
+                stmt = select(AlertLog.log_id).where(AlertLog.alert_id == existing_alert.id)  
+                existing_log_ids = set(db.scalars(stmt).all())
+                for log in logs: 
+                    if log.id not in existing_log_ids:
+                        alertlog = AlertLog(
+                            alert_id = existing_alert.id,
+                            log_id = log.id
+                        )
+                        db.add(alertlog)
+                        existing_log_ids.add(log.id)
+                        existing_alert.event_count += 1 
+            else: #log is not in the previous alert window, therefore is a part of a new alert
+                alert = Alert(
+                    username = username,
+                    time=window_end,
+                    event_count=len(logs),
+                    rule_id = rule.id
                 )
-                db.add(alertlog)
+                db.add(alert)
+                db.flush() 
+                for log in logs:
+                    alertlog = AlertLog(
+                        alert_id = alert.id,
+                        log_id = log.id
+                    )
+                    db.add(alertlog)
     db.commit()
 
 
@@ -82,6 +94,7 @@ def parse_log_line(line: str):
         ipaddress.ip_address(parts[2])
         timestamp = parts[0] + " " + parts[1]
         parsed_timestamp = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+        parsed_timestamp = parsed_timestamp.replace(tzinfo=ZoneInfo("America/New_York"))
         parts[5] = parts[5].upper()
         if parts[5] in valid_severity:
             pass
