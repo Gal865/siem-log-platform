@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Query, Depends, UploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_
 from database import get_db
-from models import Log, LogCreate, Base, RuleCreate, Rule, Alert, AlertLog
+from models import Log, LogCreate, Base, RuleCreate, Rule, Alert, AlertLog, PatchRequest
 from database import engine
 from zoneinfo import ZoneInfo
 import ipaddress
@@ -10,6 +10,8 @@ from datetime import datetime, timezone, timedelta
 import traceback 
 import time
 from database import SessionLocal
+
+allowed_patch = {'.json'}
 
 app = FastAPI()
 
@@ -54,6 +56,7 @@ def run_rule(rule:Rule, db:Session):
                     .where(Alert.username == username)
                     .where(Alert.rule_id == rule.id)
                     .where(Alert.time >= window_start)
+                    .order_by(Alert.time.desc()).limit(1)
                     )
             existing_alert = db.scalars(stmt).first()
             if existing_alert: #If a log will trigger an alert, but it within the window of the previously written alert, add it to the same alert
@@ -67,7 +70,7 @@ def run_rule(rule:Rule, db:Session):
                         )
                         db.add(alertlog)
                         existing_log_ids.add(log.id)
-                        existing_alert.event_count += 1 
+                        existing_alert.event_count += 1                 
             else: #log is not in the previous alert window, therefore is a part of a new alert
                 alert = Alert(
                     username = username,
@@ -114,6 +117,24 @@ def parse_log_line(line: str):
 def root():
     return {"message": "SIEM API running"}
 
+@app.patch("/alerts/{alert_id}/status")
+def patch_alerts( alert_id: int, body: PatchRequest, db: Session = Depends(get_db)):
+    if body.status != "open" and body.status != "resolved":
+        raise HTTPException(
+                status_code=422,
+                detail="Invalid status"
+            )
+    stmt = select(Alert).where(Alert.id == alert_id)
+    alert = db.scalars(stmt).first()
+    if alert is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Alert Doesn't exist"
+        )
+    alert.status = body.status
+    db.commit()
+    db.refresh(alert)
+    return alert
 
 @app.get("/logs")
 def get_logs(db: Session = Depends(get_db), action: str | None = None,

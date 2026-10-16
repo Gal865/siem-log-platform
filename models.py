@@ -27,7 +27,10 @@ class Rule(Base):
     action: Mapped[str] = mapped_column()
     threshold: Mapped[int] = mapped_column()
     window: Mapped[int] = mapped_column()
-    
+
+class PatchRequest(BaseModel):
+    status: str
+
 class Alert(Base):
     __tablename__ = "alerts"
 
@@ -37,6 +40,7 @@ class Alert(Base):
     event_count: Mapped[int] = mapped_column()
     rule_id: Mapped[int] = mapped_column(ForeignKey("rules.id"))
     rule: Mapped[Rule] = relationship(back_populates="alerts")
+    status: Mapped[str] = mapped_column(nullable=False, default="open")
 
 class AlertLog(Base):
     __tablename__ = "alert_logs"
