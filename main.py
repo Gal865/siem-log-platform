@@ -136,6 +136,27 @@ def patch_alerts( alert_id: int, body: PatchRequest, db: Session = Depends(get_d
     db.refresh(alert)
     return alert
 
+@app.get("/alerts/{alert_id}/logs")
+def get_logs_of_alert(alert_id:int, db:Session = Depends(get_db)):
+    stmt = (
+        select(Alert)
+        .where(Alert.id == alert_id)
+    )
+    alert = db.scalars(stmt).first()
+    if alert is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Alert not found"
+        )
+    stmt = (
+        select(Log)
+        .join(AlertLog, AlertLog.log_id == Log.id)
+        .where(AlertLog.alert_id == alert_id)
+        )
+    log_objs = db.scalars(stmt).all()
+    return log_objs
+    
+
 @app.get("/logs")
 def get_logs(db: Session = Depends(get_db), action: str | None = None,
                 username : str | None = None,
