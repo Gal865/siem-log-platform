@@ -118,7 +118,8 @@ def root():
     return {"message": "SIEM API running"}
 
 @app.get("/alerts")
-def get_alerts(status:str | None = None, db:Session = Depends(get_db)):
+def get_alerts(status:str | None = None, limit: int = Query(default=50, ge=1, le=100),
+offset: int = Query(default=0, ge=0), db:Session = Depends(get_db)):
     stmt = select(Alert)
     if status is not None:
         if status != "open" and status != "resolved":
@@ -127,6 +128,9 @@ def get_alerts(status:str | None = None, db:Session = Depends(get_db)):
                 detail="Invalid Status"
             )
         stmt = stmt.where(Alert.status==status)
+    stmt = stmt.offset(offset)
+    stmt = stmt.limit(limit)
+    stmt = stmt.order_by(Alert.id.desc())
     return db.scalars(stmt).all()
 
 @app.patch("/alerts/{alert_id}/status")
