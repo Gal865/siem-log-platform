@@ -117,6 +117,18 @@ def parse_log_line(line: str):
 def root():
     return {"message": "SIEM API running"}
 
+@app.get("/alerts")
+def get_alerts(status:str | None = None, db:Session = Depends(get_db)):
+    stmt = select(Alert)
+    if status is not None:
+        if status != "open" and status != "resolved":
+            raise HTTPException(
+                status_code=422,
+                detail="Invalid Status"
+            )
+        stmt = stmt.where(Alert.status==status)
+    return db.scalars(stmt).all()
+
 @app.patch("/alerts/{alert_id}/status")
 def patch_alerts( alert_id: int, body: PatchRequest, db: Session = Depends(get_db)):
     if body.status != "open" and body.status != "resolved":
